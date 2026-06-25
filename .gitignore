@@ -1,0 +1,11 @@
+# Local config — never commit
+*.json
+!package.json
+
+# Temp files
+/tmp/
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
