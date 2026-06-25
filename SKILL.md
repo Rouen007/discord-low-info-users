@@ -34,6 +34,21 @@ python3 analyze.py my-channel-alias --out /tmp/report.json --quiet
 
 > Channel aliases are defined in your local `~/.config/discord-cli/channels.yaml` (not shipped with this skill).
 
+## Configuration
+
+**All configuration is local. Nothing is hardcoded in the skill.**
+
+- Channel aliases: `~/.config/discord-cli/channels.yaml`
+- Exclude list (KOLs/admins): `~/.config/discord-low-info/exclude.json`
+
+Create exclude list:
+```bash
+mkdir -p ~/.config/discord-low-info
+echo '["kol_user1", "admin_user2"]' > ~/.config/discord-low-info/exclude.json
+```
+
+The script reads `exclude.json` automatically when `--exclude` is not passed.
+
 ## How It Works
 
 1. **Fetch**: Uses `discord fetch` CLI to pull channel history

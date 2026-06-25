@@ -159,6 +159,19 @@ def filter_low_info(
     return results
 
 
+EXCLUDE_CONFIG = Path.home() / ".config" / "discord-low-info" / "exclude.json"
+
+
+def load_exclude_list() -> list[str]:
+    """Load exclude list from local config file."""
+    try:
+        if EXCLUDE_CONFIG.exists():
+            return json.loads(EXCLUDE_CONFIG.read_text())
+    except Exception:
+        pass
+    return []
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("channel", help="Channel ID or alias from channels.yaml")
@@ -166,11 +179,15 @@ def main():
     parser.add_argument("--hours", type=float, default=0, help="Fetch messages from last N hours")
     parser.add_argument("--min-msgs", type=int, default=10, help="Minimum messages to be considered (default: 10)")
     parser.add_argument("--min-low-info", type=float, default=80.0, help="Minimum low-info %% (default: 80)")
-    parser.add_argument("--exclude", nargs="*", default=[], help="Usernames to exclude (e.g. KOLs)")
+    parser.add_argument("--exclude", nargs="*", default=None, help="Usernames to exclude (default: read from ~/.config/discord-low-info/exclude.json)")
     parser.add_argument("--top", type=int, default=30, help="Max users to show (default: 30)")
     parser.add_argument("--out", help="Write JSON report to PATH")
     parser.add_argument("--quiet", action="store_true", help="Only output JSON, no table")
     args = parser.parse_args()
+
+    # Load exclude list: CLI args > local config file
+    if args.exclude is None:
+        args.exclude = load_exclude_list()
 
     # Default to 7 days if neither specified
     if args.days == 0 and args.hours == 0:
