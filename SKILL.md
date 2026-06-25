@@ -16,18 +16,23 @@ python3 ~/.claude/skills/discord-low-info-users/analyze.py <channel> [--days N] 
 ## Examples
 
 ```bash
-# Find noisy users in Frank's tradingroom (last 7 days)
-python3 analyze.py tradingroom
+# Find noisy users in a channel (last 7 days, default thresholds)
+python3 analyze.py my-channel-alias
 
 # Last 3 days, lower threshold
-python3 analyze.py tradingroom --days 3 --min-msgs 5 --min-low-info 70
+python3 analyze.py my-channel-alias --days 3 --min-msgs 5 --min-low-info 70
 
-# Exclude known KOLs
-python3 analyze.py tradingroom --exclude himself65 frank solo_leveling116
+# Exclude known KOLs / admins
+python3 analyze.py my-channel-alias --exclude kol_user1 admin_user2
+
+# Use raw channel ID instead of alias
+python3 analyze.py 1234567890123456789 --days 14
 
 # JSON output for further processing
-python3 analyze.py tradingroom --out /tmp/report.json --quiet
+python3 analyze.py my-channel-alias --out /tmp/report.json --quiet
 ```
+
+> Channel aliases are defined in your local `~/.config/discord-cli/channels.yaml` (not shipped with this skill).
 
 ## How It Works
 
