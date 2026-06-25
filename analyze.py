@@ -47,17 +47,86 @@ def fetch_messages(channel: str, days: float = 0, hours: float = 0) -> list[dict
         return json.load(f)
 
 
+import re
+
+# Ticker patterns: $SPY, NVDA, QQQ, SPX, etc.
+TICKER_RE = re.compile(
+    r'\$?[A-Z]{1,5}\b|'  # $SPY, NVDA
+    r'\bSPX\b|\bSPY\b|\bQQQ\b|\bNDX\b|\bDJI\b|\bSOXX\b|\bSMH\b|\bVIX\b'  # index/ETF
+)
+
+# Price patterns: $550, 550.5, 7200点, etc.
+PRICE_RE = re.compile(r'\$?\d{2,5}(?:\.\d+)?(?:\s*[点元块刀%]|(?:\s*(?:support|resistance|target|stop))?)')
+
+# Trading terms
+TRADING_TERMS = {
+    # actions
+    'buy', 'sell', 'long', 'short', 'cover', 'close', 'open', 'add', 'trim', 'exit', 'enter',
+    '追', '抄底', '割肉', '建仓', '加仓', '减仓', '清仓', '止损', '止盈', '梭哈', 'all in',
+    # derivatives
+    'call', 'put', 'option', '期权', '末日', '蝶', 'butterfly', 'condor', 'spread',
+    'leap', '0dte', '1dte', 'dte', 'expiry', '到期',
+    # analysis
+    'support', 'resistance', 'breakout', 'breakdown', 'trend', 'vwap', 'ema', 'sma',
+    'macd', 'rsi', 'gamma', 'delta', 'theta', 'vega', 'greeks', 'gex', 'dex',
+    '支撑', '阻力', '突破', '跌破', '趋势', '背离', '超买', '超卖',
+    # market
+    'earnings', '财报', 'eps', 'revenue', 'guidance', 'forward pe',
+    'fed', 'fomc', 'cpi', 'pce', 'ppi', '非农', 'nfp', 'pmi', 'gdp',
+    'inflation', '通胀', '降息', '加息', '利率', 'rate', 'yield', 'bond',
+    '股价', '市值', '估值', 'pe', 'pb', 'roe',
+    # sentiment
+    'bull', 'bear', '多头', '空头', '牛市', '熊市', '震荡', '回调', '回撤', '反弹',
+    'hedge', '对冲', '避险', '止损', '爆仓', 'margin',
+    # well-known stocks (Chinese names)
+    '伯克希尔', '英伟达', '苹果', '特斯拉', '谷歌', '亚马逊', '微软', '脸书', '台积电',
+    '美光', '高通', '英特尔', 'AMD', '博通', 'ARM',
+}
+
+# Market events / emojis that carry signal
+SIGNAL_EMOJIS = {'🚀', '📉', '📈', '💰', '🔥', '⚠️', '🎯', '✅', '❌', '💪', '🐻', '🐂'}
+
+
+def has_financial_content(content: str) -> bool:
+    """Check if a message contains financial/trading information."""
+    text = content.strip()
+    if not text:
+        return False
+
+    lower = text.lower()
+
+    # Check tickers
+    if TICKER_RE.search(text):
+        return True
+
+    # Check price patterns
+    if PRICE_RE.search(text):
+        return True
+
+    # Check trading terms
+    for term in TRADING_TERMS:
+        if term in lower:
+            return True
+
+    return False
+
+
 def classify_message(content: str) -> str:
-    """Classify a message by information content."""
-    length = len(content.strip())
-    if length == 0:
+    """Classify a message by financial information content.
+
+    Returns:
+        'empty': no content
+        'noise': no financial info (emoji, lol, ok, off-topic)
+        'signal': contains financial/trading content
+    """
+    text = content.strip()
+    if len(text) == 0:
         return "empty"
-    elif length < 20:
-        return "short"
-    elif length < 100:
-        return "medium"
-    else:
-        return "long"
+
+    if has_financial_content(text):
+        return "signal"
+
+    return "noise"
 
 
 def analyze_users(messages: list[dict]) -> dict:
@@ -66,16 +135,14 @@ def analyze_users(messages: list[dict]) -> dict:
         "global_name": "",
         "total": 0,
         "empty": 0,
-        "short": 0,
-        "medium": 0,
-        "long": 0,
+        "noise": 0,
+        "signal": 0,
         "chars": 0,
-        "samples": [],
+        "signal_samples": [],
+        "noise_samples": [],
         "latest_msg": None,
         "latest_ts": None,
     })
-
-    ET = timezone(timedelta(hours=-4))
 
     for msg in messages:
         author = msg.get("author", {})
@@ -92,9 +159,12 @@ def analyze_users(messages: list[dict]) -> dict:
         category = classify_message(content)
         u[category] += 1
 
-        # Save samples (up to 5 non-empty)
-        if content.strip() and len(u["samples"]) < 5:
-            u["samples"].append(content[:80].replace("\n", " "))
+        # Save samples
+        if content.strip():
+            if category == "signal" and len(u["signal_samples"]) < 5:
+                u["signal_samples"].append(content[:80].replace("\n", " "))
+            elif category == "noise" and len(u["noise_samples"]) < 5:
+                u["noise_samples"].append(content[:80].replace("\n", " "))
 
         # Track latest message
         if ts and (u["latest_ts"] is None or ts > u["latest_ts"]):
@@ -110,7 +180,11 @@ def filter_low_info(
     min_low_info_pct: float = 80.0,
     exclude_users: list[str] | None = None,
 ) -> list[dict]:
-    """Filter and rank low-info active users."""
+    """Filter and rank low-info active users.
+
+    Low-info = empty + noise (messages with no financial content).
+    Signal = messages containing tickers, prices, trading terms, analysis.
+    """
     exclude = set(exclude_users or [])
     results = []
 
@@ -120,13 +194,14 @@ def filter_low_info(
         if stats["total"] < min_msgs:
             continue
 
-        low_info = stats["empty"] + stats["short"]
+        low_info = stats["empty"] + stats["noise"]
         low_info_pct = (low_info / stats["total"] * 100) if stats["total"] > 0 else 0
 
         if low_info_pct < min_low_info_pct:
             continue
 
         avg_chars = stats["chars"] / stats["total"] if stats["total"] > 0 else 0
+        signal_pct = (stats["signal"] / stats["total"] * 100) if stats["total"] > 0 else 0
 
         # Parse latest timestamp
         latest_et = ""
@@ -143,11 +218,12 @@ def filter_low_info(
             "total_msgs": stats["total"],
             "avg_chars": round(avg_chars, 1),
             "low_info_pct": round(low_info_pct, 1),
+            "signal_pct": round(signal_pct, 1),
             "empty": stats["empty"],
-            "short": stats["short"],
-            "medium": stats["medium"],
-            "long": stats["long"],
-            "samples": stats["samples"][:3],
+            "noise": stats["noise"],
+            "signal": stats["signal"],
+            "signal_samples": stats["signal_samples"][:3],
+            "noise_samples": stats["noise_samples"][:3],
             "latest_msg": stats["latest_msg"],
             "latest_time": latest_et,
             # Score: more msgs + higher low-info% = worse
@@ -253,11 +329,12 @@ def main():
 
         for i, u in enumerate(results[:args.top], 1):
             print(f"{i:2}. {u['username']} ({u['global_name']})")
-            print(f"    Msgs: {u['total_msgs']} | Avg chars: {u['avg_chars']} | Low-info: {u['low_info_pct']}% | Score: {u['score']}")
-            print(f"    Breakdown: empty={u['empty']} short={u['short']} medium={u['medium']} long={u['long']}")
+            print(f"    Msgs: {u['total_msgs']} | Signal: {u['signal']} ({u['signal_pct']}%) | Noise: {u['noise']} | Empty: {u['empty']} | Score: {u['score']}")
             print(f"    Latest: {u['latest_time']} - \"{u['latest_msg']}\"")
-            if u['samples']:
-                print(f"    Samples: {u['samples'][:2]}")
+            if u['signal_samples']:
+                print(f"    ✅ Signal: {u['signal_samples'][:2]}")
+            if u['noise_samples']:
+                print(f"    ❌ Noise: {u['noise_samples'][:2]}")
             print()
 
     # Always output JSON to stdout
